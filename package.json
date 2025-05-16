@@ -6,10 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "install": "npm install --legacy-peer-deps"
   },
   "dependencies": {
-    "@farcaster/frame-sdk": "^0.0.38",
+    "@farcaster/frame-sdk": "0.0.17",
     "@farcaster/frame-wagmi-connector": "^0.0.2",
     "ethers": "^5.7.2",
     "viem": "^2.7.9",
@@ -20,5 +21,13 @@
     "postcss": "^8.4.33",
     "tailwindcss": "^3.4.1",
     "vite": "^6.3.5"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "overrides": {
+    "@farcaster/frame-wagmi-connector": {
+      "@farcaster/frame-sdk": "0.0.17"
+    }
   }
 }
