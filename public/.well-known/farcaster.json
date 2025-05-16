@@ -1,4 +1,9 @@
 {
+  "accountAssociation": {
+    "header": "eyJmaWQiOjI1NjU5MiwidHlwZSI6ImN1c3RvZHkiLCJrZXkiOiIweEFENjZBOTE3QmQ3MTZjN0Q0YjlBYjIyRTgwNDNFNkJhMGFBZTFkNTgifQ",
+    "payload": "eyJkb21haW4iOiJwYWNtYW4ubW9uYWRlc2Nyb3cueHl6In0",
+    "signature": "MHhkNTgzMWY0MjA3YmJlNDY1OGQ1NmNlYTE3M2UwODczMDVjMmI1MTA3MWNlNGIyMmJjMmE4MzA1ZWQ2MTk1ZGE1MTQ5ODllNjliZDdiMjU0ZDMwYzdlZTAyZGQwNWEyZWM0MWFkMWFjYWUxYTM0MzI3NzVjNjBkNzlmYzgyYTYzMTFj"
+  },
   "frame": {
     "version": "1",
     "name": "Pacman on Monad",
