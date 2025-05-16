@@ -14,6 +14,7 @@ export default class PacmanGame {
     this.gameStarted = false;
     this.level = 1;
     this.gamePaid = false;
+    this.isMobile = 'ontouchstart' in window;
     
     // Game elements
     this.pacman = {
@@ -33,8 +34,8 @@ export default class PacmanGame {
     this.walls = [];
     
     // Game settings
-    this.gameWidth = 600;
-    this.gameHeight = 500;
+    this.gameWidth = this.isMobile ? Math.min(window.innerWidth - 30, 600) : 600;
+    this.gameHeight = this.isMobile ? Math.min(window.innerHeight * 0.5, 500) : 500;
     this.dotSize = 5;
     this.powerPelletSize = 15;
     this.dotValue = 10;
@@ -51,6 +52,7 @@ export default class PacmanGame {
     // Mobile controls
     this.touchStartX = 0;
     this.touchStartY = 0;
+    this.virtualButtons = {}; // For virtual controls
     
     // Game sounds
     this.sounds = {
@@ -80,6 +82,10 @@ export default class PacmanGame {
     };
     
     this.assetsLoaded = false;
+    this.paymentInProgress = false;
+    this.lastFrameTime = 0;
+    this.fps = 60;
+    
     this.log(`Game initialized with debug mode: ${debugMode}`);
   }
   
@@ -101,6 +107,13 @@ export default class PacmanGame {
       this.canvas.style.backgroundColor = 'black';
       this.canvas.style.display = 'block';
       this.canvas.style.margin = '0 auto';
+      this.canvas.style.touchAction = 'none'; // Prevent scrolling on touch
+      
+      // Make canvas responsive to device size
+      if (this.isMobile) {
+        this.canvas.style.width = '100%';
+        this.canvas.style.maxWidth = `${this.gameWidth}px`;
+      }
       
       this.ctx = this.canvas.getContext('2d');
       this.container.appendChild(this.canvas);
@@ -116,6 +129,11 @@ export default class PacmanGame {
       // Add controls
       this.setupControls();
       
+      // Add virtual controls for mobile devices
+      if (this.isMobile) {
+        this.addVirtualControls();
+      }
+      
       // Create game status display
       const statusDisplay = document.createElement('div');
       statusDisplay.id = 'game-status';
@@ -126,26 +144,13 @@ export default class PacmanGame {
       
       // Create payment button
       const payButton = document.createElement('button');
+      payButton.id = 'pay-button';
       payButton.classList.add('bg-yellow-400', 'text-black', 'font-bold', 'py-2', 'px-4', 'rounded', 'mt-4', 'mb-4', 'mx-auto', 'block');
       payButton.innerText = 'Pay 0.1 MON to Play';
       payButton.onclick = () => this.payGameFee();
       this.container.appendChild(payButton);
       
-      // Create debug bypass button (only in debug mode)
-      if (this.debugMode) {
-        const bypassButton = document.createElement('button');
-        bypassButton.classList.add('bg-purple-500', 'text-white', 'font-bold', 'py-2', 'px-4', 'rounded', 'mt-4', 'mb-4', 'mx-auto', 'block');
-        bypassButton.innerText = 'Debug: Skip Payment';
-        bypassButton.onclick = () => {
-          this.gamePaid = true;
-          this.showMessage('Debug mode: Payment bypassed! Click Start to play.');
-          document.getElementById('start-button').classList.remove('hidden');
-          this.showStatus('Payment bypassed (debug mode)');
-        };
-        this.container.appendChild(bypassButton);
-      }
-      
-      // Create start button
+      // Create start button (hidden initially)
       const startButton = document.createElement('button');
       startButton.classList.add('bg-green-500', 'text-white', 'font-bold', 'py-2', 'px-4', 'rounded', 'mt-4', 'mb-4', 'mx-auto', 'block', 'hidden');
       startButton.id = 'start-button';
@@ -161,11 +166,7 @@ export default class PacmanGame {
       this.container.appendChild(scoreDisplay);
       
       // Show message
-      if (this.debugMode) {
-        this.showMessage('DEBUG MODE: Sign in with Warpcast and pay 0.1 MON to play (or use Debug button)');
-      } else {
-        this.showMessage('Sign in with Warpcast and pay 0.1 MON to play');
-      }
+      this.showMessage('Sign in with Warpcast and pay 0.1 MON to play');
       
       this.log('Game interface initialized');
       this.showStatus('Ready to play');
@@ -175,8 +176,16 @@ export default class PacmanGame {
       this.container.innerHTML = `
         <div class="bg-red-600 text-white p-4 rounded text-center">
           Error initializing game: ${error.message || 'Unknown error'}
+          <button id="retry-game" class="mt-2 bg-yellow-500 hover:bg-yellow-700 text-black font-bold py-2 px-4 rounded">
+            Retry
+          </button>
         </div>
       `;
+      
+      document.getElementById('retry-game')?.addEventListener('click', () => {
+        window.location.reload();
+      });
+      
       return false;
     }
   }
@@ -228,17 +237,20 @@ export default class PacmanGame {
       
       // Load sounds - with error handling for mobile
       try {
-        this.sounds.start = new Audio('/assets/start.mp3');
-        this.sounds.munch = new Audio('/assets/munch.mp3');
-        this.sounds.powerPellet = new Audio('/assets/power-pellet.mp3');
-        this.sounds.ghostEaten = new Audio('/assets/ghost-eaten.mp3');
-        this.sounds.death = new Audio('/assets/death.mp3');
-        this.sounds.levelComplete = new Audio('/assets/level-complete.mp3');
-        
-        // Preload sounds
-        Object.values(this.sounds).forEach(sound => {
-          if (sound) sound.load();
-        });
+        // Only load sounds if not on mobile (many mobile browsers block autoplay)
+        if (!this.isMobile) {
+          this.sounds.start = new Audio('/assets/start.mp3');
+          this.sounds.munch = new Audio('/assets/munch.mp3');
+          this.sounds.powerPellet = new Audio('/assets/power-pellet.mp3');
+          this.sounds.ghostEaten = new Audio('/assets/ghost-eaten.mp3');
+          this.sounds.death = new Audio('/assets/death.mp3');
+          this.sounds.levelComplete = new Audio('/assets/level-complete.mp3');
+          
+          // Preload sounds
+          Object.values(this.sounds).forEach(sound => {
+            if (sound) sound.load();
+          });
+        }
       } catch (error) {
         this.log(`Sound loading error: ${error.message}`);
         // Continue without sounds
@@ -258,6 +270,70 @@ export default class PacmanGame {
       this.log(`Asset loading error: ${error.message}`);
       this.assetsLoaded = false;
     }
+  }
+  
+  addVirtualControls() {
+    const controlsContainer = document.createElement('div');
+    controlsContainer.classList.add('virtual-controls', 'mt-4', 'mb-4');
+    controlsContainer.style.display = 'grid';
+    controlsContainer.style.gridTemplateColumns = 'repeat(3, 1fr)';
+    controlsContainer.style.gridGap = '10px';
+    controlsContainer.style.maxWidth = '240px';
+    controlsContainer.style.margin = '0 auto';
+    
+    // Create control buttons
+    const directions = [
+      { position: 'top', text: '↑', key: 'ArrowUp', gridArea: '1 / 2 / 2 / 3' },
+      { position: 'left', text: '←', key: 'ArrowLeft', gridArea: '2 / 1 / 3 / 2' },
+      { position: 'right', text: '→', key: 'ArrowRight', gridArea: '2 / 3 / 3 / 4' },
+      { position: 'bottom', text: '↓', key: 'ArrowDown', gridArea: '3 / 2 / 4 / 3' }
+    ];
+    
+    directions.forEach(dir => {
+      const button = document.createElement('button');
+      button.innerText = dir.text;
+      button.style.gridArea = dir.gridArea;
+      button.classList.add('bg-blue-500', 'hover:bg-blue-700', 'text-white', 'font-bold', 'py-3', 'px-4', 'rounded-full', 'text-2xl');
+      
+      // Store reference to the button
+      this.virtualButtons[dir.key] = button;
+      
+      // Touch events
+      button.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        this.keys[dir.key] = true;
+        button.classList.add('bg-blue-700');
+      }, { passive: false });
+      
+      button.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        this.keys[dir.key] = false;
+        button.classList.remove('bg-blue-700');
+      }, { passive: false });
+      
+      // Mouse events (for testing on desktop)
+      button.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        this.keys[dir.key] = true;
+        button.classList.add('bg-blue-700');
+      });
+      
+      button.addEventListener('mouseup', (e) => {
+        e.preventDefault();
+        this.keys[dir.key] = false;
+        button.classList.remove('bg-blue-700');
+      });
+      
+      button.addEventListener('mouseleave', (e) => {
+        e.preventDefault();
+        this.keys[dir.key] = false;
+        button.classList.remove('bg-blue-700');
+      });
+      
+      controlsContainer.appendChild(button);
+    });
+    
+    this.container.appendChild(controlsContainer);
   }
   
   playSound(soundName) {
@@ -292,19 +368,23 @@ export default class PacmanGame {
     // Keyboard controls
     window.addEventListener('keydown', (e) => {
       if (Object.keys(this.keys).includes(e.key)) {
+        e.preventDefault(); // Prevent scrolling with arrow keys
         this.keys[e.key] = true;
       }
     });
     
     window.addEventListener('keyup', (e) => {
       if (Object.keys(this.keys).includes(e.key)) {
+        e.preventDefault();
         this.keys[e.key] = false;
       }
     });
     
-    // Mobile touch controls
+    // Swipe controls for mobile
     this.canvas.addEventListener('touchstart', (e) => {
       e.preventDefault();
+      if (!this.gameStarted || this.gameOver) return;
+      
       this.touchStartX = e.touches[0].clientX;
       this.touchStartY = e.touches[0].clientY;
     }, { passive: false });
@@ -319,89 +399,182 @@ export default class PacmanGame {
       const diffX = touchX - this.touchStartX;
       const diffY = touchY - this.touchStartY;
       
-      // Determine swipe direction
-      if (Math.abs(diffX) > Math.abs(diffY)) {
-        // Horizontal swipe
-        if (diffX > 0) {
-          this.pacman.direction = 'right';
-        } else {
-          this.pacman.direction = 'left';
-        }
-      } else {
-        // Vertical swipe
-        if (diffY > 0) {
-          this.pacman.direction = 'down';
-        } else {
-          this.pacman.direction = 'up';
-        }
-      }
+      // Only register a swipe if it's a significant movement
+      const minSwipeDistance = 30;
       
-      this.touchStartX = touchX;
-      this.touchStartY = touchY;
+      if (Math.abs(diffX) > minSwipeDistance || Math.abs(diffY) > minSwipeDistance) {
+        // Reset all keys first
+        this.keys.ArrowLeft = false;
+        this.keys.ArrowRight = false;
+        this.keys.ArrowUp = false;
+        this.keys.ArrowDown = false;
+        
+        // Determine swipe direction
+        if (Math.abs(diffX) > Math.abs(diffY)) {
+          // Horizontal swipe
+          if (diffX > 0) {
+            this.pacman.direction = 'right';
+            this.keys.ArrowRight = true;
+          } else {
+            this.pacman.direction = 'left';
+            this.keys.ArrowLeft = true;
+          }
+        } else {
+          // Vertical swipe
+          if (diffY > 0) {
+            this.pacman.direction = 'down';
+            this.keys.ArrowDown = true;
+          } else {
+            this.pacman.direction = 'up';
+            this.keys.ArrowUp = true;
+          }
+        }
+        
+        // Update touch starting position for continued swiping
+        this.touchStartX = touchX;
+        this.touchStartY = touchY;
+      }
+    }, { passive: false });
+    
+    this.canvas.addEventListener('touchend', (e) => {
+      e.preventDefault();
+      // Keep the current direction active for better mobile gameplay
     }, { passive: false });
   }
   
   async payGameFee() {
+    // Prevent multiple clicks
+    if (this.paymentInProgress) return;
+    
+    const payButton = document.getElementById('pay-button');
+    if (payButton) {
+      payButton.disabled = true;
+      payButton.innerText = 'Processing...';
+      payButton.classList.add('opacity-50');
+    }
+    
+    this.paymentInProgress = true;
     this.showStatus('Processing payment...');
     
-    // Debug mode bypass
     if (this.debugMode) {
       this.log('Debug mode: Bypassing payment process');
       this.gamePaid = true;
-      this.showMessage('DEBUG MODE: Payment successful! Click Start to play.');
+      this.showMessage('Payment successful! Click Start to play.');
       document.getElementById('start-button').classList.remove('hidden');
       this.showStatus('Payment successful (debug mode)');
+      
+      if (payButton) {
+        payButton.classList.add('hidden');
+      }
+      
+      this.paymentInProgress = false;
       return;
     }
     
-    if (!this.auth.isSignedIn) {
-      this.showStatus('Not signed in, attempting to sign in...', true);
-      const signedIn = await this.auth.signIn();
-      if (!signedIn) {
-        this.showMessage('Failed to sign in with Warpcast. Please try again.');
-        this.showStatus('Sign-in failed', true);
-        return;
-      }
-    }
-    
     try {
+      // Ensure user is signed in
+      if (!this.auth.isSignedIn) {
+        this.showStatus('Not signed in, attempting to sign in...', true);
+        try {
+          const signedIn = await this.auth.signIn();
+          if (!signedIn) {
+            throw new Error('Sign-in failed');
+          }
+        } catch (error) {
+          this.showMessage('Failed to sign in with Warpcast. Please try again.');
+          this.showStatus('Sign-in failed', true);
+          this.paymentInProgress = false;
+          
+          if (payButton) {
+            payButton.disabled = false;
+            payButton.innerText = 'Pay 0.1 MON to Play';
+            payButton.classList.remove('opacity-50');
+          }
+          
+          return;
+        }
+      }
+      
+      // Get user information
       const fid = this.auth.getUserFid();
       const username = this.auth.getUserName();
       
       if (!fid || !username) {
         this.showMessage('Could not get user information. Please try again.');
         this.showStatus('User information not available', true);
+        this.paymentInProgress = false;
+        
+        if (payButton) {
+          payButton.disabled = false;
+          payButton.innerText = 'Pay 0.1 MON to Play';
+          payButton.classList.remove('opacity-50');
+        }
+        
         return;
       }
       
       this.showStatus(`Processing payment for FID: ${fid}, Username: ${username}`);
+      this.showMessage('Waiting for wallet confirmation...');
       
-      // Call contract to pay game fee
-      const tx = await this.contract.payGameFee(fid, username, {
-        value: ethers.utils.parseEther('0.1')
-      });
-      
-      this.showStatus('Transaction sent, waiting for confirmation...');
-      
-      // Wait for transaction confirmation
-      await tx.wait();
-      
-      this.gamePaid = true;
-      this.showMessage('Payment successful! Click Start to play.');
-      document.getElementById('start-button').classList.remove('hidden');
-      this.showStatus('Payment confirmed successfully');
+      try {
+        // Call contract to pay game fee
+        const tx = await this.contract.payGameFee(fid, username, {
+          value: ethers.utils.parseEther('0.1')
+        });
+        
+        this.showStatus('Transaction sent, waiting for confirmation...');
+        this.showMessage('Transaction sent! Waiting for confirmation...');
+        
+        // Wait for transaction confirmation
+        await tx.wait();
+        
+        this.gamePaid = true;
+        this.showMessage('Payment successful! Click Start to play.');
+        document.getElementById('start-button').classList.remove('hidden');
+        this.showStatus('Payment confirmed successfully');
+        
+        // Hide payment button after successful payment
+        if (payButton) {
+          payButton.classList.add('hidden');
+        }
+      } catch (error) {
+        console.error('Error paying game fee:', error);
+        this.showMessage(`Payment failed: ${error.message || 'Transaction rejected'}`);
+        this.showStatus(`Payment error: ${error.message}`, true);
+        
+        if (payButton) {
+          payButton.disabled = false;
+          payButton.innerText = 'Pay 0.1 MON to Play';
+          payButton.classList.remove('opacity-50');
+        }
+      }
     } catch (error) {
-      console.error('Error paying game fee:', error);
-      this.showMessage(`Failed to process payment: ${error.message || 'Unknown error'}`);
-      this.showStatus(`Payment error: ${error.message}`, true);
+      console.error('Payment process error:', error);
+      this.showMessage(`Payment process error: ${error.message || 'Unknown error'}`);
+      this.showStatus(`Payment process error: ${error.message}`, true);
+      
+      if (payButton) {
+        payButton.disabled = false;
+        payButton.innerText = 'Pay 0.1 MON to Play';
+        payButton.classList.remove('opacity-50');
+      }
+    } finally {
+      this.paymentInProgress = false;
     }
   }
   
   startGame() {
+    // Strict payment enforcement
     if (!this.gamePaid && !this.debugMode) {
       this.showMessage('Please pay 0.1 MON to play.');
       this.showStatus('Game not paid for', true);
       return;
+    }
+    
+    // Hide start button during gameplay
+    const startButton = document.getElementById('start-button');
+    if (startButton) {
+      startButton.classList.add('hidden');
     }
     
     this.showStatus('Starting game...');
@@ -416,7 +589,8 @@ export default class PacmanGame {
     // Initialize game board
     this.initializeLevel();
     
-    // Start game loop
+    // Start game loop with framerate control
+    this.lastFrameTime = performance.now();
     this.gameLoop();
     
     // Hide message
@@ -537,25 +711,34 @@ export default class PacmanGame {
     // This is a simple implementation - at higher levels, ghosts occasionally target Pacman
   }
   
-  gameLoop() {
+  gameLoop(timestamp) {
     if (!this.gameStarted || this.gameOver) return;
     
-    // Clear canvas
-    this.ctx.fillStyle = 'black';
-    this.ctx.fillRect(0, 0, this.gameWidth, this.gameHeight);
+    // Framerate control
+    if (!timestamp) timestamp = performance.now();
+    const elapsed = timestamp - this.lastFrameTime;
     
-    // Update game state
-    this.update();
-    
-    // Draw game elements
-    this.draw();
+    // Limit to ~60 FPS
+    if (elapsed > 1000 / this.fps) {
+      this.lastFrameTime = timestamp;
+      
+      // Clear canvas
+      this.ctx.fillStyle = 'black';
+      this.ctx.fillRect(0, 0, this.gameWidth, this.gameHeight);
+      
+      // Update game state
+      this.update();
+      
+      // Draw game elements
+      this.draw();
+    }
     
     // Continue game loop
-    requestAnimationFrame(() => this.gameLoop());
+    requestAnimationFrame((time) => this.gameLoop(time));
   }
   
   update() {
-    // Update Pacman position based on keyboard input
+    // Update Pacman position based on keyboard/touch input
     this.updatePacman();
     
     // Update ghost positions
@@ -571,7 +754,7 @@ export default class PacmanGame {
   }
   
   updatePacman() {
-    // Move pacman based on keys pressed
+    // Move pacman based on active keys
     let newX = this.pacman.x;
     let newY = this.pacman.y;
     
@@ -595,8 +778,10 @@ export default class PacmanGame {
       this.pacman.y = newY;
     }
     
-    // Animate mouth
-    this.pacman.mouthOpen = !this.pacman.mouthOpen;
+    // Animate mouth (slower on mobile)
+    if (Math.random() > (this.isMobile ? 0.8 : 0.5)) {
+      this.pacman.mouthOpen = !this.pacman.mouthOpen;
+    }
   }
   
   updateGhosts() {
@@ -628,7 +813,7 @@ export default class PacmanGame {
         ghost.x = newX;
         ghost.y = newY;
       }
-      
+
       // At higher levels, occasionally target Pacman (smarter ghosts)
       if (this.level > 2 && Math.random() < 0.05 * (this.level - 1)) {
         if (ghost.x < this.pacman.x) {
@@ -686,10 +871,12 @@ export default class PacmanGame {
         // Reset vulnerability after a few seconds
         setTimeout(() => {
           for (const ghost of this.ghosts) {
-            ghost.vulnerable = false;
-            // Reset original colors
-            const index = this.ghosts.indexOf(ghost);
-            ghost.color = ['#FF0000', '#00FFFF', '#FFB8FF', '#FFB852'][index % 4];
+            if (ghost.vulnerable) {
+              ghost.vulnerable = false;
+              // Reset original colors
+              const index = this.ghosts.indexOf(ghost);
+              ghost.color = ['#FF0000', '#00FFFF', '#FFB8FF', '#FFB852'][index % 4];
+            }
           }
         }, 5000);
       }
@@ -749,7 +936,7 @@ export default class PacmanGame {
     // Draw walls
     this.ctx.fillStyle = '#0000FF'; // Blue walls
     for (const wall of this.walls) {
-      if (this.assetsLoaded && this.images.wall.complete) {
+      if (this.assetsLoaded && this.images.wall && this.images.wall.complete) {
         // Use wall image if available
         const wallImg = this.images.wall;
         for (let x = wall.x; x < wall.x + wall.width; x += 20) {
@@ -772,7 +959,7 @@ export default class PacmanGame {
     // Draw dots
     this.ctx.fillStyle = '#FFFFFF'; // White dots
     for (const dot of this.dots) {
-      if (this.assetsLoaded && this.images.dot.complete) {
+      if (this.assetsLoaded && this.images.dot && this.images.dot.complete) {
         this.ctx.drawImage(
           this.images.dot,
           dot.x - dot.size,
@@ -790,7 +977,7 @@ export default class PacmanGame {
     // Draw power pellets
     this.ctx.fillStyle = '#FFFFFF'; // White power pellets
     for (const pellet of this.powerPellets) {
-      if (this.assetsLoaded && this.images.powerPellet.complete) {
+      if (this.assetsLoaded && this.images.powerPellet && this.images.powerPellet.complete) {
         this.ctx.drawImage(
           this.images.powerPellet,
           pellet.x - pellet.size,
@@ -815,35 +1002,40 @@ export default class PacmanGame {
     
     // Draw level indicator
     this.ctx.fillStyle = '#FFFFFF';
-    this.ctx.font = '16px "Press Start 2P", Arial';
+    this.ctx.font = this.isMobile ? '12px Arial' : '16px "Press Start 2P", Arial';
     this.ctx.fillText(`Level: ${this.level}`, 20, 20);
   }
   
-drawPacman() {
+  drawPacman() {
     if (this.assetsLoaded) {
       // Use pacman images if available
       let pacmanImg;
       
       if (!this.pacman.mouthOpen) {
-        if (this.images.pacmanClosed.complete) {
+        if (this.images.pacmanClosed && this.images.pacmanClosed.complete) {
           pacmanImg = this.images.pacmanClosed;
         }
       } else {
         switch (this.pacman.direction) {
           case 'right':
-            if (this.images.pacmanRight.complete) pacmanImg = this.images.pacmanRight;
+            if (this.images.pacmanRight && this.images.pacmanRight.complete) 
+              pacmanImg = this.images.pacmanRight;
             break;
           case 'left':
-            if (this.images.pacmanLeft.complete) pacmanImg = this.images.pacmanLeft;
+            if (this.images.pacmanLeft && this.images.pacmanLeft.complete) 
+              pacmanImg = this.images.pacmanLeft;
             break;
           case 'up':
-            if (this.images.pacmanUp.complete) pacmanImg = this.images.pacmanUp;
+            if (this.images.pacmanUp && this.images.pacmanUp.complete) 
+              pacmanImg = this.images.pacmanUp;
             break;
           case 'down':
-            if (this.images.pacmanDown.complete) pacmanImg = this.images.pacmanDown;
+            if (this.images.pacmanDown && this.images.pacmanDown.complete) 
+              pacmanImg = this.images.pacmanDown;
             break;
           default:
-            if (this.images.pacmanRight.complete) pacmanImg = this.images.pacmanRight;
+            if (this.images.pacmanRight && this.images.pacmanRight.complete) 
+              pacmanImg = this.images.pacmanRight;
         }
       }
       
@@ -940,26 +1132,30 @@ drawPacman() {
       // Use ghost images if available
       let ghostImg;
       
-      if (ghost.vulnerable && this.images.ghostVulnerable.complete) {
+      if (ghost.vulnerable && this.images.ghostVulnerable && this.images.ghostVulnerable.complete) {
         ghostImg = this.images.ghostVulnerable;
       } else {
         switch (ghost.color) {
           case '#FF0000': // Red
-            if (this.images.ghostRed.complete) ghostImg = this.images.ghostRed;
+            if (this.images.ghostRed && this.images.ghostRed.complete) 
+              ghostImg = this.images.ghostRed;
             break;
           case '#FFB8FF': // Pink
-            if (this.images.ghostPink.complete) ghostImg = this.images.ghostPink;
+            if (this.images.ghostPink && this.images.ghostPink.complete) 
+              ghostImg = this.images.ghostPink;
             break;
           case '#00FFFF': // Blue/Cyan
-            if (this.images.ghostBlue.complete) ghostImg = this.images.ghostBlue;
+            if (this.images.ghostBlue && this.images.ghostBlue.complete) 
+              ghostImg = this.images.ghostBlue;
             break;
           case '#FFB852': // Orange
-            if (this.images.ghostOrange.complete) ghostImg = this.images.ghostOrange;
+            if (this.images.ghostOrange && this.images.ghostOrange.complete) 
+              ghostImg = this.images.ghostOrange;
             break;
           default:
-            if (ghost.vulnerable && this.images.ghostVulnerable.complete) {
+            if (ghost.vulnerable && this.images.ghostVulnerable && this.images.ghostVulnerable.complete) {
               ghostImg = this.images.ghostVulnerable;
-            } else if (this.images.ghostRed.complete) {
+            } else if (this.images.ghostRed && this.images.ghostRed.complete) {
               ghostImg = this.images.ghostRed;
             }
         }
@@ -1079,7 +1275,10 @@ drawPacman() {
   }
   
   updateScoreDisplay() {
-    document.getElementById('score-display').innerText = `Score: ${this.score}`;
+    const scoreDisplay = document.getElementById('score-display');
+    if (scoreDisplay) {
+      scoreDisplay.innerText = `Score: ${this.score}`;
+    }
   }
   
   showMessage(message) {
@@ -1087,7 +1286,7 @@ drawPacman() {
     if (!messageDiv) {
       messageDiv = document.createElement('div');
       messageDiv.id = 'game-message';
-      messageDiv.classList.add('bg-black', 'bg-opacity-80', 'text-white', 'p-4', 'rounded', 'absolute', 'top-1/2', 'left-1/2', 'transform', '-translate-x-1/2', '-translate-y-1/2', 'text-center', 'min-w-[300px]');
+      messageDiv.classList.add('bg-black', 'bg-opacity-80', 'text-white', 'p-4', 'rounded', 'absolute', 'top-1/2', 'left-1/2', 'transform', '-translate-x-1/2', '-translate-y-1/2', 'text-center', 'min-w-[300px]', 'z-10');
       this.container.appendChild(messageDiv);
     }
     
@@ -1142,9 +1341,24 @@ drawPacman() {
       }, 2000);
     }
     
-    // Reset game
+    // Reset game and show Start button
     setTimeout(() => {
-      document.getElementById('start-button').classList.remove('hidden');
+      const startButton = document.getElementById('start-button');
+      if (startButton) {
+        startButton.classList.remove('hidden');
+      }
+      
+      // If game wasn't paid for (debug mode), show payment button again
+      if (this.debugMode) {
+        const payButton = document.getElementById('pay-button');
+        if (payButton && payButton.classList.contains('hidden')) {
+          payButton.classList.remove('hidden');
+          payButton.disabled = false;
+          payButton.innerText = 'Pay 0.1 MON to Play';
+          payButton.classList.remove('opacity-50');
+          this.gamePaid = false;
+        }
+      }
     }, 3000);
   }
   
@@ -1164,14 +1378,17 @@ drawPacman() {
       
       // Submit score to blockchain
       this.showStatus(`Submitting score: ${this.score} for FID: ${fid}`);
+      this.showMessage(`Submitting score to blockchain...`);
       
       try {
         const tx = await this.contract.updateScore(fid, this.score);
         this.showStatus('Transaction sent, waiting for confirmation...');
+        this.showMessage('Score transaction sent. Waiting for confirmation...');
+        
         await tx.wait();
         
         this.showStatus('Score submitted successfully');
-        this.showMessage(`Game Over! Score submitted: ${this.score}`);
+        this.showMessage(`Game Over! Score ${this.score} submitted to leaderboard.`);
       } catch (error) {
         this.showStatus(`Error submitting transaction: ${error.message}`, true);
         this.showMessage(`Game Over! Failed to submit score: ${error.message}`);
@@ -1183,6 +1400,29 @@ drawPacman() {
     } catch (error) {
       this.showStatus(`Score submission error: ${error.message}`, true);
       this.showMessage('Game Over! Failed to submit score. Please try again.');
+    }
+  }
+  
+  // Handle window resize for responsive gameplay
+  handleResize() {
+    if (this.isMobile) {
+      const newWidth = Math.min(window.innerWidth - 30, 600);
+      const newHeight = Math.min(window.innerHeight * 0.5, 500);
+      
+      // Only resize if significantly different
+      if (Math.abs(newWidth - this.gameWidth) > 50 || Math.abs(newHeight - this.gameHeight) > 50) {
+        this.gameWidth = newWidth;
+        this.gameHeight = newHeight;
+        
+        // Update canvas dimensions
+        this.canvas.width = this.gameWidth;
+        this.canvas.height = this.gameHeight;
+        
+        // Reinitialize game elements if game is in progress
+        if (this.gameStarted && !this.gameOver) {
+          this.initializeLevel();
+        }
+      }
     }
   }
 }

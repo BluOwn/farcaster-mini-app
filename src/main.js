@@ -11,8 +11,8 @@ import Leaderboard from './components/leaderboard.js';
 // Set your contract address here
 const PACMAN_CONTRACT_ADDRESS = "0x1234567890123456789012345678901234567890"; // Replace with your actual contract address
 
-// Debug mode to bypass blockchain requirements (for testing)
-const DEBUG_MODE = true; // Set to false for production
+// IMPORTANT: Set this to false for production
+const DEBUG_MODE = false; // Set to false for production
 
 // Initialize app
 async function init() {
@@ -34,13 +34,14 @@ async function init() {
   authWarning.innerText = 'This game must be opened in Warpcast as a Mini App';
   document.body.prepend(authWarning);
   
-  // Add debug status display
-  const statusDisplay = document.createElement('div');
-  statusDisplay.id = 'status-display';
-  statusDisplay.classList.add('bg-black', 'text-green-400', 'p-2', 'mb-4', 'font-mono', 'text-sm', 'rounded', 'overflow-auto');
-  statusDisplay.style.maxHeight = '200px';
-  statusDisplay.style.display = DEBUG_MODE ? 'block' : 'none';
-  document.body.prepend(statusDisplay);
+  // Add debug status display - only in debug mode
+  if (DEBUG_MODE) {
+    const statusDisplay = document.createElement('div');
+    statusDisplay.id = 'status-display';
+    statusDisplay.classList.add('bg-black', 'text-green-400', 'p-2', 'mb-4', 'font-mono', 'text-sm', 'rounded', 'overflow-auto');
+    statusDisplay.style.maxHeight = '200px';
+    document.body.prepend(statusDisplay);
+  }
   
   // Function to update status
   const updateStatus = (message) => {
@@ -70,6 +71,14 @@ async function init() {
   `;
   
   try {
+    // Try to hide splash screen immediately
+    try {
+      await sdk.actions.ready();
+      console.log('Initial splash screen hide successful');
+    } catch (error) {
+      console.error('Initial splash screen hide error:', error);
+    }
+    
     updateStatus("Checking if we're in a Mini App context...");
     let isInMiniApp = false;
     
@@ -88,15 +97,6 @@ async function init() {
     if (!isInMiniApp && !DEBUG_MODE) {
       document.getElementById('auth-warning').classList.remove('hidden');
       updateStatus("Not in Mini App context, showing warning");
-      
-      // Still hide the splash screen
-      try {
-        await sdk.actions.ready();
-        updateStatus("Hiding splash screen despite not being in Mini App");
-      } catch (error) {
-        updateStatus(`Error hiding splash screen: ${error.message}`);
-      }
-      
       return;
     }
     
@@ -122,15 +122,6 @@ async function init() {
     if (!isInitialized && !DEBUG_MODE) {
       updateStatus('Failed to initialize auth');
       document.getElementById('user-info').innerText = 'Authentication failed. Please try again.';
-      
-      // Still hide the splash screen
-      try {
-        await sdk.actions.ready();
-        updateStatus("Hiding splash screen despite auth failure");
-      } catch (error) {
-        updateStatus(`Error hiding splash screen: ${error.message}`);
-      }
-      
       return;
     }
     
@@ -140,10 +131,32 @@ async function init() {
     
     let contract;
     try {
-      const provider = new ethers.providers.Web3Provider(window.ethereum);
-      const signer = provider.getSigner();
-      contract = new ethers.Contract(PACMAN_CONTRACT_ADDRESS, PACMAN_ABI, signer);
-      updateStatus("Contract connection established");
+      // Setup provider and contract
+      if (window.ethereum) {
+        // Request account access if needed
+        try {
+          await window.ethereum.request({ method: 'eth_requestAccounts' });
+        } catch (error) {
+          throw new Error(`Account access denied: ${error.message}`);
+        }
+        
+        const provider = new ethers.providers.Web3Provider(window.ethereum);
+        const signer = provider.getSigner();
+        
+        // Check connected network
+        const network = await provider.getNetwork();
+        updateStatus(`Connected to network ID: ${network.chainId}`);
+        
+        // Check if connected to Monad Testnet (chainId 10143)
+        if (network.chainId !== 10143 && !DEBUG_MODE) {
+          throw new Error('Please connect to Monad Testnet (Chain ID: 10143)');
+        }
+        
+        contract = new ethers.Contract(PACMAN_CONTRACT_ADDRESS, PACMAN_ABI, signer);
+        updateStatus("Contract connection established");
+      } else {
+        throw new Error("MetaMask or compatible wallet not found");
+      }
     } catch (error) {
       updateStatus(`Contract initialization error: ${error.message}`);
       
@@ -151,20 +164,22 @@ async function init() {
         // Create a mock contract for testing
         updateStatus("DEBUG MODE: Creating mock contract");
         contract = {
-          payGameFee: async () => {
-            updateStatus("Mock contract: payGameFee called");
+          payGameFee: async (fid, username, options) => {
+            updateStatus(`Mock contract: payGameFee called with FID: ${fid}, username: ${username}`);
             return { wait: async () => {} };
           },
-          updateScore: async () => {
-            updateStatus("Mock contract: updateScore called");
+          updateScore: async (fid, score) => {
+            updateStatus(`Mock contract: updateScore called with FID: ${fid}, score: ${score}`);
             return { wait: async () => {} };
           },
-          getTopPlayers: async () => {
-            updateStatus("Mock contract: getTopPlayers called");
+          getTopPlayers: async (count) => {
+            updateStatus(`Mock contract: getTopPlayers(${count}) called`);
             return [
-              { username: "player1", highScore: { toNumber: () => 10000 } },
-              { username: "player2", highScore: { toNumber: () => 8000 } },
-              { username: "player3", highScore: { toNumber: () => 6000 } }
+              { fid: { toString: () => "1001" }, username: "player1", highScore: { toNumber: () => 10000 } },
+              { fid: { toString: () => "1002" }, username: "player2", highScore: { toNumber: () => 8000 } },
+              { fid: { toString: () => "1003" }, username: "player3", highScore: { toNumber: () => 6000 } },
+              { fid: { toString: () => "1004" }, username: "player4", highScore: { toNumber: () => 5000 } },
+              { fid: { toString: () => "1005" }, username: "player5", highScore: { toNumber: () => 4000 } }
             ];
           }
         };
@@ -174,22 +189,22 @@ async function init() {
             Error connecting to blockchain: ${error.message || 'Unknown error'}
             <br>
             Please make sure you have MetaMask installed and connected to Monad Testnet.
+            <button id="retry-connect" class="mt-2 bg-yellow-500 hover:bg-yellow-700 text-black font-bold py-2 px-4 rounded">
+              Retry Connection
+            </button>
           </div>
         `;
         
-        // Still hide the splash screen
-        try {
-          await sdk.actions.ready();
-          updateStatus("Hiding splash screen despite contract failure");
-        } catch (error) {
-          updateStatus(`Error hiding splash screen: ${error.message}`);
-        }
+        // Add retry button functionality
+        document.getElementById('retry-connect')?.addEventListener('click', () => {
+          window.location.reload();
+        });
         
         return;
       }
     }
     
-    // Sign in with Warpcast
+    // Sign in with Warpcast if needed
     if (!auth.isSignedIn && !DEBUG_MODE) {
       updateStatus("Not signed in, attempting to sign in...");
       try {
@@ -198,17 +213,13 @@ async function init() {
       } catch (error) {
         updateStatus(`Sign-in error: ${error.message}`);
         document.getElementById('user-info').innerText = 'Sign-in failed. Please try again.';
-        
-        // Still hide the splash screen
-        try {
-          await sdk.actions.ready();
-          updateStatus("Hiding splash screen despite sign-in failure");
-        } catch (error) {
-          updateStatus(`Error hiding splash screen: ${error.message}`);
-        }
-        
         return;
       }
+    }
+    
+    // Update user info display
+    if (auth.user) {
+      document.getElementById('user-info').innerText = `Signed in as: ${auth.user.displayName || auth.user.username || `FID: ${auth.user.fid}`}`;
     }
     
     // Initialize game
@@ -222,23 +233,23 @@ async function init() {
       document.getElementById('game-container').innerHTML = `
         <div class="bg-red-600 text-white p-4 rounded text-center">
           Error initializing game: ${error.message || 'Unknown error'}
+          <button id="retry-game" class="mt-2 bg-yellow-500 hover:bg-yellow-700 text-black font-bold py-2 px-4 rounded">
+            Retry
+          </button>
         </div>
       `;
       
-      // Still hide the splash screen
-      try {
-        await sdk.actions.ready();
-        updateStatus("Hiding splash screen despite game init failure");
-      } catch (error) {
-        updateStatus(`Error hiding splash screen: ${error.message}`);
-      }
+      // Add retry button functionality
+      document.getElementById('retry-game')?.addEventListener('click', () => {
+        window.location.reload();
+      });
       
       return;
     }
     
     // Initialize leaderboard
     updateStatus("Initializing leaderboard...");
-    const leaderboard = new Leaderboard('leaderboard-container', contract);
+    const leaderboard = new Leaderboard('leaderboard-container', contract, DEBUG_MODE);
     try {
       await leaderboard.init();
       updateStatus("Leaderboard initialized");
@@ -247,8 +258,22 @@ async function init() {
       document.getElementById('leaderboard-container').innerHTML = `
         <div class="bg-yellow-600 text-white p-4 rounded text-center">
           Could not load leaderboard: ${error.message || 'Unknown error'}
+          <button id="retry-leaderboard" class="mt-2 bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
+            Retry Leaderboard
+          </button>
         </div>
       `;
+      
+      // Add retry button functionality
+      document.getElementById('retry-leaderboard')?.addEventListener('click', () => {
+        leaderboard.refresh();
+      });
+    }
+    
+    // Add virtual controls for mobile automatically
+    if ('ontouchstart' in window) {
+      updateStatus("Mobile device detected, adding virtual controls");
+      addVirtualControls('game-container');
     }
     
     // Notify that app is ready
@@ -272,6 +297,96 @@ async function init() {
       updateStatus(`Error hiding splash screen: ${error.message}`);
     }
   }
+}
+
+// Helper function to add virtual controls for mobile
+function addVirtualControls(containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  
+  const controlsContainer = document.createElement('div');
+  controlsContainer.classList.add('virtual-controls', 'mt-4', 'flex', 'flex-col', 'items-center', 'gap-2');
+  controlsContainer.style.touchAction = 'none';
+  
+  // Add title
+  const title = document.createElement('div');
+  title.classList.add('text-white', 'mb-2', 'text-sm');
+  title.innerText = 'Touch Controls';
+  controlsContainer.appendChild(title);
+  
+  // Create dpad layout
+  const dpad = document.createElement('div');
+  dpad.classList.add('grid', 'grid-cols-3', 'gap-1');
+  
+  const directions = [
+    { x: 0, y: 0, name: '', arrow: '' },
+    { x: 1, y: 0, name: 'up', arrow: '↑', key: 'ArrowUp' },
+    { x: 2, y: 0, name: '', arrow: '' },
+    { x: 0, y: 1, name: 'left', arrow: '←', key: 'ArrowLeft' },
+    { x: 1, y: 1, name: '', arrow: '•' },
+    { x: 2, y: 1, name: 'right', arrow: '→', key: 'ArrowRight' },
+    { x: 0, y: 2, name: '', arrow: '' },
+    { x: 1, y: 2, name: 'down', arrow: '↓', key: 'ArrowDown' },
+    { x: 2, y: 2, name: '', arrow: '' }
+  ];
+  
+  directions.forEach(dir => {
+    const cell = document.createElement('div');
+    cell.style.width = '60px';
+    cell.style.height = '60px';
+    cell.style.display = 'flex';
+    cell.style.justifyContent = 'center';
+    cell.style.alignItems = 'center';
+    
+    if (dir.name) {
+      const button = document.createElement('button');
+      button.classList.add('bg-blue-500', 'hover:bg-blue-700', 'text-white', 'font-bold', 'rounded-full', 'w-full', 'h-full', 'flex', 'items-center', 'justify-center', 'text-2xl');
+      button.innerText = dir.arrow;
+      button.setAttribute('data-direction', dir.name);
+      button.setAttribute('data-key', dir.key);
+      
+      // Add control handlers for buttons
+      const sendKeyEvent = (type, key) => {
+        const event = new KeyboardEvent(type, {
+          key: key,
+          bubbles: true,
+          cancelable: true
+        });
+        document.dispatchEvent(event);
+      };
+      
+      // Touch events for mobile
+      button.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        sendKeyEvent('keydown', dir.key);
+      }, { passive: false });
+      
+      button.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        sendKeyEvent('keyup', dir.key);
+      }, { passive: false });
+      
+      // Mouse events for desktop testing
+      button.addEventListener('mousedown', () => {
+        sendKeyEvent('keydown', dir.key);
+      });
+      
+      button.addEventListener('mouseup', () => {
+        sendKeyEvent('keyup', dir.key);
+      });
+      
+      button.addEventListener('mouseleave', () => {
+        sendKeyEvent('keyup', dir.key);
+      });
+      
+      cell.appendChild(button);
+    }
+    
+    dpad.appendChild(cell);
+  });
+  
+  controlsContainer.appendChild(dpad);
+  container.appendChild(controlsContainer);
 }
 
 // Start the app
