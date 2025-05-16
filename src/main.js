@@ -1,3 +1,5 @@
+// Modified version of main.js with error fixes
+
 import './style.css';
 import { ethers } from 'ethers';
 import { config } from './utils/ethers-config.js';
@@ -35,7 +37,7 @@ async function detectWarpcastEnvironment() {
   
   // Method 1: Try the standard SDK method
   try {
-    inWarpcast = await sdk.isInMiniApp();
+    inWarpcast = await sdk.isInMiniApp().catch(() => false);
     console.log("SDK isInMiniApp result:", inWarpcast);
   } catch (error) {
     console.log("Error checking with isInMiniApp:", error.message);
@@ -330,7 +332,9 @@ async function continueInitialization(isInWarpcast) {
     
     // Update user info display
     if (auth.user) {
-      document.getElementById('user-info').innerText = `Signed in as: ${auth.user.displayName || auth.user.username || `FID: ${auth.user.fid}`}`;
+      // Make sure we're using a string value for the text display - FIX HERE!
+      const displayName = auth.user.displayName || auth.user.username || `FID: ${auth.user.fid}`;
+      document.getElementById('user-info').innerText = `Signed in as: ${displayName}`;
     }
     
     // Initialize game with appropriate debug mode
