@@ -11,15 +11,27 @@ import Leaderboard from './components/leaderboard.js';
 // Set your contract address here
 const PACMAN_CONTRACT_ADDRESS = "0x5bCBB2d1d45c57a745c490d9e9421E0c05EdC778"; // Replace with your actual contract address
 
-// IMPORTANT: Set this to false for production
-const DEBUG_MODE = false; // Set to false for production
+// Debug mode control
+let DEBUG_MODE = false;
 
-// Helper function to check if we're in a Warpcast Mini App environment
+// Check if debug override is enabled
+if (window.DEBUG_OVERRIDE || localStorage.getItem('force_warpcast_mode') === 'true') {
+  DEBUG_MODE = true;
+  console.log("Debug mode enabled via override");
+}
+
+// Helper function to check if we're in a Warpcast environment
 async function detectWarpcastEnvironment() {
+  console.log("Checking if we're in Warpcast environment...");
+  
+  // Check local storage first for forced mode
+  if (localStorage.getItem('force_warpcast_mode') === 'true') {
+    console.log("Warpcast mode forced via localStorage");
+    return true;
+  }
+  
   // Try multiple methods to detect if we're in Warpcast
   let inWarpcast = false;
-  
-  console.log("Checking if we're in Warpcast Mini App environment...");
   
   // Method 1: Try the standard SDK method
   try {
@@ -79,7 +91,7 @@ async function init() {
   
   console.log("DOM fully loaded, continuing initialization...");
   
-  // Try to hide splash screen immediately to prevent it getting stuck
+  // Try to hide splash screen immediately
   try {
     await sdk.actions.ready();
     console.log('Initial splash screen hide successful');
@@ -137,12 +149,18 @@ async function init() {
     const isInWarpcast = await detectWarpcastEnvironment();
     updateStatus(`Is in Warpcast environment: ${isInWarpcast}`);
     
-    // For safety, force it to true - we'll assume we're in Warpcast
-    // This is because we want the game to work even if detection fails
-    let forceWarpcast = true;
-    updateStatus(`Forcing Warpcast environment: ${forceWarpcast}`);
+    // For safety, always enable Warpcast mode
+    // This ensures the game works even if detection fails
+    const forceWarpcast = true;
     
-    if (!isInWarpcast && !forceWarpcast && !DEBUG_MODE) {
+    if (isInWarpcast || forceWarpcast) {
+      updateStatus("Warpcast mode enabled");
+      
+      // Make sure auth warning is hidden
+      if (document.getElementById('auth-warning')) {
+        document.getElementById('auth-warning').classList.add('hidden');
+      }
+    } else {
       document.getElementById('auth-warning').classList.remove('hidden');
       updateStatus("Not in Warpcast environment, showing warning");
       
@@ -159,8 +177,8 @@ async function init() {
       return;
     }
     
-    // Continue with initialization
-    await continueInitialization(isInWarpcast || forceWarpcast);
+    // Continue with initialization, forcing Warpcast mode
+    await continueInitialization(true);
     
   } catch (error) {
     console.error('Detection error:', error);
@@ -207,14 +225,6 @@ async function continueInitialization(isInWarpcast) {
     if (!isInitialized && !DEBUG_MODE && !isInWarpcast) {
       updateStatus('Failed to initialize auth');
       document.getElementById('user-info').innerText = 'Authentication failed. Please try again.';
-      
-      // Hide splash screen even if auth fails
-      try {
-        await sdk.actions.ready();
-      } catch (error) {
-        console.error('Error hiding splash screen:', error);
-      }
-      
       return;
     }
     
@@ -224,9 +234,12 @@ async function continueInitialization(isInWarpcast) {
     
     let contract;
     try {
-      // Setup provider and contract
-      if (window.ethereum) {
-        // Request account access if needed
+      // In Warpcast, we'll use a mock contract
+      if (isInWarpcast) {
+        updateStatus("Using mock contract for Warpcast");
+        contract = createMockContract();
+      } else if (window.ethereum) {
+        // Web version with real wallet
         try {
           await window.ethereum.request({ method: 'eth_requestAccounts' });
         } catch (error) {
@@ -242,7 +255,7 @@ async function continueInitialization(isInWarpcast) {
         
         // Check if connected to Monad Testnet (chainId 10143)
         if (network.chainId !== 10143 && !DEBUG_MODE) {
-          // Instead of throwing error, try to switch network
+          // Try to switch network
           try {
             await window.ethereum.request({
               method: 'wallet_switchEthereumChain',
@@ -255,7 +268,6 @@ async function continueInitialization(isInWarpcast) {
             const updatedSigner = updatedProvider.getSigner();
             contract = new ethers.Contract(PACMAN_CONTRACT_ADDRESS, PACMAN_ABI, updatedSigner);
           } catch (switchError) {
-            // If network switch fails, create a mock contract
             updateStatus(`Network switch failed: ${switchError.message}`);
             throw new Error('Please connect to Monad Testnet (Chain ID: 10143)');
           }
@@ -270,32 +282,11 @@ async function continueInitialization(isInWarpcast) {
     } catch (error) {
       updateStatus(`Contract initialization error: ${error.message}`);
       
-      // Always create a mock contract - this allows the game to be playable
-      // even without a proper wallet connection
-      updateStatus("Creating mock contract");
-      contract = {
-        payGameFee: async (fid, username, options) => {
-          updateStatus(`Mock contract: payGameFee called with FID: ${fid}, username: ${username}`);
-          return { wait: async () => {} };
-        },
-        updateScore: async (fid, score) => {
-          updateStatus(`Mock contract: updateScore called with FID: ${fid}, score: ${score}`);
-          return { wait: async () => {} };
-        },
-        getTopPlayers: async (count) => {
-          updateStatus(`Mock contract: getTopPlayers(${count}) called`);
-          return [
-            { fid: { toString: () => "1001" }, username: "player1", highScore: { toNumber: () => 10000 } },
-            { fid: { toString: () => "1002" }, username: "player2", highScore: { toNumber: () => 8000 } },
-            { fid: { toString: () => "1003" }, username: "player3", highScore: { toNumber: () => 6000 } },
-            { fid: { toString: () => "1004" }, username: "player4", highScore: { toNumber: () => 5000 } },
-            { fid: { toString: () => "1005" }, username: "player5", highScore: { toNumber: () => 4000 } }
-          ];
-        }
-      };
-      
-      // Only show error message if not in Warpcast or debug mode
-      if (!DEBUG_MODE && !isInWarpcast) {
+      // In Warpcast, always use mock contract
+      if (isInWarpcast) {
+        updateStatus("Using mock contract for Warpcast");
+        contract = createMockContract();
+      } else {
         document.getElementById('game-container').innerHTML = `
           <div class="bg-red-600 text-white p-4 rounded text-center">
             Error connecting to blockchain: ${error.message || 'Unknown error'}
@@ -311,6 +302,8 @@ async function continueInitialization(isInWarpcast) {
         document.getElementById('retry-connect')?.addEventListener('click', () => {
           window.location.reload();
         });
+        
+        return;
       }
     }
     
@@ -323,21 +316,13 @@ async function continueInitialization(isInWarpcast) {
       } catch (error) {
         updateStatus(`Sign-in error: ${error.message}`);
         
-        // Auto-sign in for Warpcast users even if sign-in fails
+        // In Warpcast, force sign-in
         if (isInWarpcast) {
           auth.isSignedIn = true;
           auth.user = auth.user || { fid: 999999, username: "warpcast_player" };
-          updateStatus("Auto-sign in for Warpcast user");
+          updateStatus("Forced sign-in for Warpcast user");
         } else {
           document.getElementById('user-info').innerText = 'Sign-in failed. Please try again.';
-          
-          // Still hide splash screen
-          try {
-            await sdk.actions.ready();
-          } catch (error) {
-            console.error('Error hiding splash screen:', error);
-          }
-          
           return;
         }
       }
@@ -348,7 +333,7 @@ async function continueInitialization(isInWarpcast) {
       document.getElementById('user-info').innerText = `Signed in as: ${auth.user.displayName || auth.user.username || `FID: ${auth.user.fid}`}`;
     }
     
-    // Initialize game with debug mode
+    // Initialize game with appropriate debug mode
     updateStatus("Initializing game...");
     const game = new PacmanGame('game-container', auth, contract, DEBUG_MODE || isInWarpcast);
     try {
@@ -369,13 +354,6 @@ async function continueInitialization(isInWarpcast) {
       document.getElementById('retry-game')?.addEventListener('click', () => {
         window.location.reload();
       });
-      
-      // Still hide splash screen
-      try {
-        await sdk.actions.ready();
-      } catch (error) {
-        console.error('Error hiding splash screen:', error);
-      }
       
       return;
     }
@@ -408,35 +386,6 @@ async function continueInitialization(isInWarpcast) {
       updateStatus("Mobile device detected, adding virtual controls");
       addVirtualControls('game-container');
     }
-    
-    // Add emergency override button (hidden by default)
-    const emergencyDiv = document.createElement('div');
-    emergencyDiv.classList.add('text-center', 'mt-4');
-    emergencyDiv.innerHTML = `
-      <button id="force-debug-button" class="bg-gray-700 text-white text-xs py-1 px-2 rounded opacity-50 hover:opacity-100">
-        Force Debug Mode
-      </button>
-    `;
-    document.body.appendChild(emergencyDiv);
-    
-    document.getElementById('force-debug-button').addEventListener('click', () => {
-      // Enable debug mode
-      const gameInstance = game;
-      if (gameInstance) {
-        gameInstance.debugMode = true;
-        gameInstance.gamePaid = true;
-        
-        // Show start button
-        const startButton = document.getElementById('start-button');
-        if (startButton) startButton.classList.remove('hidden');
-        
-        // Hide payment button
-        const payButton = document.getElementById('pay-button');
-        if (payButton) payButton.classList.add('hidden');
-        
-        alert('Debug mode enabled! You can now play without payment.');
-      }
-    });
     
     // Notify that app is ready
     updateStatus("Calling sdk.actions.ready() to hide splash screen...");
@@ -478,6 +427,60 @@ async function continueInitialization(isInWarpcast) {
       updateStatus(`Error hiding splash screen: ${error.message}`);
     }
   }
+}
+
+// Helper function to create a mock contract for Warpcast
+function createMockContract() {
+  return {
+    payGameFee: async (fid, username, options) => {
+      console.log(`Mock contract: payGameFee called with FID: ${fid}, username: ${username}`);
+      // Simulate transaction delay
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      return { 
+        wait: async () => {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          return {};
+        } 
+      };
+    },
+    updateScore: async (fid, score) => {
+      console.log(`Mock contract: updateScore called with FID: ${fid}, score: ${score}`);
+      // Simulate transaction delay
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      return { 
+        wait: async () => {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          return {};
+        }
+      };
+    },
+    getTopPlayers: async (count) => {
+      console.log(`Mock contract: getTopPlayers(${count}) called`);
+      // Use localStorage to persist high scores between sessions
+      let highScores = [];
+      try {
+        const storedScores = localStorage.getItem('pacman_high_scores');
+        if (storedScores) {
+          highScores = JSON.parse(storedScores);
+        }
+      } catch (e) {
+        console.warn("Error reading high scores from localStorage:", e);
+      }
+      
+      // Add some default scores if none exist
+      if (highScores.length === 0) {
+        highScores = [
+          { fid: { toString: () => "1001" }, username: "player1", highScore: { toNumber: () => 10000 } },
+          { fid: { toString: () => "1002" }, username: "player2", highScore: { toNumber: () => 8000 } },
+          { fid: { toString: () => "1003" }, username: "player3", highScore: { toNumber: () => 6000 } },
+          { fid: { toString: () => "1004" }, username: "player4", highScore: { toNumber: () => 5000 } },
+          { fid: { toString: () => "1005" }, username: "player5", highScore: { toNumber: () => 4000 } }
+        ];
+      }
+      
+      return highScores.slice(0, count);
+    }
+  };
 }
 
 // Helper function to add virtual controls for mobile
@@ -569,6 +572,32 @@ function addVirtualControls(containerId) {
   controlsContainer.appendChild(dpad);
   container.appendChild(controlsContainer);
 }
+
+// Helper function to forcibly enable Warpcast mode
+function forceWarpcastMode() {
+  // For use in emergency situations
+  localStorage.setItem('force_warpcast_mode', 'true');
+  
+  // Force enable debug mode for the game
+  window.DEBUG_OVERRIDE = true;
+  
+  // Refresh the page
+  window.location.reload();
+}
+
+// Add a hidden emergency button
+setTimeout(() => {
+  const emergencyButton = document.createElement('button');
+  emergencyButton.innerText = "Force Warpcast Mode";
+  emergencyButton.style.position = "fixed";
+  emergencyButton.style.bottom = "5px";
+  emergencyButton.style.right = "5px";
+  emergencyButton.style.fontSize = "8px";
+  emergencyButton.style.padding = "2px";
+  emergencyButton.style.opacity = "0.2";
+  emergencyButton.onclick = forceWarpcastMode;
+  document.body.appendChild(emergencyButton);
+}, 2000);
 
 // Start the app
 init();
