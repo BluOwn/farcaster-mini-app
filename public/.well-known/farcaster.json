@@ -1,0 +1,12 @@
+{
+  "frame": {
+    "version": "1",
+    "name": "Pacman on Monad",
+    "iconUrl": "https://pacman.monadescrow.xyz/assets/pacman-icon.png",
+    "homeUrl": "https://pacman.monadescrow.xyz",
+    "imageUrl": "https://pacman.monadescrow.xyz/assets/pacman-banner.png",
+    "buttonTitle": "🎮 Play Now",
+    "splashImageUrl": "https://pacman.monadescrow.xyz/assets/pacman-splash.png",
+    "splashBackgroundColor": "#000000"
+  }
+}
