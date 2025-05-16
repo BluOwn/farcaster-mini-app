@@ -1,8 +1,12 @@
+import { ethers } from 'ethers';
+import { sdk } from '@farcaster/frame-sdk';
+
 export default class PacmanGame {
-  constructor(containerId, authInstance, contract) {
+  constructor(containerId, authInstance, contract, debugMode = false) {
     this.container = document.getElementById(containerId);
     this.auth = authInstance;
     this.contract = contract;
+    this.debugMode = debugMode;
     this.canvas = null;
     this.ctx = null;
     this.score = 0;
@@ -47,48 +51,241 @@ export default class PacmanGame {
     // Mobile controls
     this.touchStartX = 0;
     this.touchStartY = 0;
+    
+    // Game sounds
+    this.sounds = {
+      start: null,
+      munch: null,
+      powerPellet: null,
+      ghostEaten: null,
+      death: null,
+      levelComplete: null
+    };
+    
+    // Images
+    this.images = {
+      pacmanRight: null,
+      pacmanLeft: null,
+      pacmanUp: null,
+      pacmanDown: null,
+      pacmanClosed: null,
+      ghostRed: null,
+      ghostPink: null,
+      ghostBlue: null,
+      ghostOrange: null,
+      ghostVulnerable: null,
+      dot: null,
+      powerPellet: null,
+      wall: null
+    };
+    
+    this.assetsLoaded = false;
+    this.log(`Game initialized with debug mode: ${debugMode}`);
+  }
+  
+  log(message) {
+    if (this.debugMode) {
+      console.log(`[PacmanGame] ${message}`);
+    }
   }
   
   async init() {
-    // Create canvas
-    this.canvas = document.createElement('canvas');
-    this.canvas.width = this.gameWidth;
-    this.canvas.height = this.gameHeight;
-    this.canvas.style.border = '4px solid blue';
-    this.canvas.style.backgroundColor = 'black';
-    this.canvas.style.display = 'block';
-    this.canvas.style.margin = '0 auto';
+    this.log('Initializing game...');
     
-    this.ctx = this.canvas.getContext('2d');
-    this.container.appendChild(this.canvas);
+    try {
+      // Create canvas
+      this.canvas = document.createElement('canvas');
+      this.canvas.width = this.gameWidth;
+      this.canvas.height = this.gameHeight;
+      this.canvas.style.border = '4px solid blue';
+      this.canvas.style.backgroundColor = 'black';
+      this.canvas.style.display = 'block';
+      this.canvas.style.margin = '0 auto';
+      
+      this.ctx = this.canvas.getContext('2d');
+      this.container.appendChild(this.canvas);
+      
+      // Try to load assets
+      try {
+        this.loadAssets();
+      } catch (error) {
+        this.log(`Asset loading error: ${error.message}`);
+        // Continue without assets
+      }
+      
+      // Add controls
+      this.setupControls();
+      
+      // Create game status display
+      const statusDisplay = document.createElement('div');
+      statusDisplay.id = 'game-status';
+      statusDisplay.classList.add('p-2', 'text-center', 'text-sm', 'mt-2', 'bg-blue-500', 'text-white', 'rounded');
+      statusDisplay.style.display = this.debugMode ? 'block' : 'none';
+      statusDisplay.innerText = 'Game initialized';
+      this.container.appendChild(statusDisplay);
+      
+      // Create payment button
+      const payButton = document.createElement('button');
+      payButton.classList.add('bg-yellow-400', 'text-black', 'font-bold', 'py-2', 'px-4', 'rounded', 'mt-4', 'mb-4', 'mx-auto', 'block');
+      payButton.innerText = 'Pay 0.1 MON to Play';
+      payButton.onclick = () => this.payGameFee();
+      this.container.appendChild(payButton);
+      
+      // Create debug bypass button (only in debug mode)
+      if (this.debugMode) {
+        const bypassButton = document.createElement('button');
+        bypassButton.classList.add('bg-purple-500', 'text-white', 'font-bold', 'py-2', 'px-4', 'rounded', 'mt-4', 'mb-4', 'mx-auto', 'block');
+        bypassButton.innerText = 'Debug: Skip Payment';
+        bypassButton.onclick = () => {
+          this.gamePaid = true;
+          this.showMessage('Debug mode: Payment bypassed! Click Start to play.');
+          document.getElementById('start-button').classList.remove('hidden');
+          this.showStatus('Payment bypassed (debug mode)');
+        };
+        this.container.appendChild(bypassButton);
+      }
+      
+      // Create start button
+      const startButton = document.createElement('button');
+      startButton.classList.add('bg-green-500', 'text-white', 'font-bold', 'py-2', 'px-4', 'rounded', 'mt-4', 'mb-4', 'mx-auto', 'block', 'hidden');
+      startButton.id = 'start-button';
+      startButton.innerText = 'Start Game';
+      startButton.onclick = () => this.startGame();
+      this.container.appendChild(startButton);
+      
+      // Create score display
+      const scoreDisplay = document.createElement('div');
+      scoreDisplay.id = 'score-display';
+      scoreDisplay.classList.add('text-yellow-400', 'text-2xl', 'font-bold', 'text-center', 'mt-4');
+      scoreDisplay.innerText = 'Score: 0';
+      this.container.appendChild(scoreDisplay);
+      
+      // Show message
+      if (this.debugMode) {
+        this.showMessage('DEBUG MODE: Sign in with Warpcast and pay 0.1 MON to play (or use Debug button)');
+      } else {
+        this.showMessage('Sign in with Warpcast and pay 0.1 MON to play');
+      }
+      
+      this.log('Game interface initialized');
+      this.showStatus('Ready to play');
+      return true;
+    } catch (error) {
+      this.log(`Initialization error: ${error.message}`);
+      this.container.innerHTML = `
+        <div class="bg-red-600 text-white p-4 rounded text-center">
+          Error initializing game: ${error.message || 'Unknown error'}
+        </div>
+      `;
+      return false;
+    }
+  }
+  
+  loadAssets() {
+    this.log('Loading assets...');
     
-    // Add controls
-    this.setupControls();
-    
-    // Create payment button
-    const payButton = document.createElement('button');
-    payButton.classList.add('bg-yellow-400', 'text-black', 'font-bold', 'py-2', 'px-4', 'rounded', 'mt-4', 'mb-4', 'mx-auto', 'block');
-    payButton.innerText = 'Pay 0.1 MON to Play';
-    payButton.onclick = () => this.payGameFee();
-    this.container.appendChild(payButton);
-    
-    // Create start button
-    const startButton = document.createElement('button');
-    startButton.classList.add('bg-green-500', 'text-white', 'font-bold', 'py-2', 'px-4', 'rounded', 'mt-4', 'mb-4', 'mx-auto', 'block', 'hidden');
-    startButton.id = 'start-button';
-    startButton.innerText = 'Start Game';
-    startButton.onclick = () => this.startGame();
-    this.container.appendChild(startButton);
-    
-    // Create score display
-    const scoreDisplay = document.createElement('div');
-    scoreDisplay.id = 'score-display';
-    scoreDisplay.classList.add('text-yellow-400', 'text-2xl', 'font-bold', 'text-center', 'mt-4');
-    scoreDisplay.innerText = 'Score: 0';
-    this.container.appendChild(scoreDisplay);
-    
-    // Show message
-    this.showMessage('Sign in with Warpcast and pay 0.1 MON to play');
+    // Check if assets directory exists
+    try {
+      // Try to load images
+      this.images.pacmanRight = new Image();
+      this.images.pacmanRight.src = '/assets/pacman-right.png';
+      
+      this.images.pacmanLeft = new Image();
+      this.images.pacmanLeft.src = '/assets/pacman-left.png';
+      
+      this.images.pacmanUp = new Image();
+      this.images.pacmanUp.src = '/assets/pacman-up.png';
+      
+      this.images.pacmanDown = new Image();
+      this.images.pacmanDown.src = '/assets/pacman-down.png';
+      
+      this.images.pacmanClosed = new Image();
+      this.images.pacmanClosed.src = '/assets/pacman-closed.png';
+      
+      this.images.ghostRed = new Image();
+      this.images.ghostRed.src = '/assets/ghost-red.png';
+      
+      this.images.ghostPink = new Image();
+      this.images.ghostPink.src = '/assets/ghost-pink.png';
+      
+      this.images.ghostBlue = new Image();
+      this.images.ghostBlue.src = '/assets/ghost-blue.png';
+      
+      this.images.ghostOrange = new Image();
+      this.images.ghostOrange.src = '/assets/ghost-orange.png';
+      
+      this.images.ghostVulnerable = new Image();
+      this.images.ghostVulnerable.src = '/assets/ghost-vulnerable.png';
+      
+      this.images.dot = new Image();
+      this.images.dot.src = '/assets/dot.png';
+      
+      this.images.powerPellet = new Image();
+      this.images.powerPellet.src = '/assets/power-pellet.png';
+      
+      this.images.wall = new Image();
+      this.images.wall.src = '/assets/wall-piece.png';
+      
+      // Load sounds - with error handling for mobile
+      try {
+        this.sounds.start = new Audio('/assets/start.mp3');
+        this.sounds.munch = new Audio('/assets/munch.mp3');
+        this.sounds.powerPellet = new Audio('/assets/power-pellet.mp3');
+        this.sounds.ghostEaten = new Audio('/assets/ghost-eaten.mp3');
+        this.sounds.death = new Audio('/assets/death.mp3');
+        this.sounds.levelComplete = new Audio('/assets/level-complete.mp3');
+        
+        // Preload sounds
+        Object.values(this.sounds).forEach(sound => {
+          if (sound) sound.load();
+        });
+      } catch (error) {
+        this.log(`Sound loading error: ${error.message}`);
+        // Continue without sounds
+      }
+      
+      // Set a flag for using images
+      this.images.pacmanRight.onload = () => {
+        this.assetsLoaded = true;
+        this.log('Assets loaded successfully');
+      };
+      
+      this.images.pacmanRight.onerror = () => {
+        this.log('Failed to load image assets, falling back to canvas drawing');
+        this.assetsLoaded = false;
+      };
+    } catch (error) {
+      this.log(`Asset loading error: ${error.message}`);
+      this.assetsLoaded = false;
+    }
+  }
+  
+  playSound(soundName) {
+    if (this.sounds[soundName] && this.sounds[soundName].play) {
+      try {
+        this.sounds[soundName].currentTime = 0;
+        this.sounds[soundName].play().catch(error => {
+          this.log(`Sound play error (${soundName}): ${error.message}`);
+        });
+      } catch (error) {
+        this.log(`Sound play error (${soundName}): ${error.message}`);
+      }
+    }
+  }
+  
+  showStatus(message, isError = false) {
+    const statusDiv = document.getElementById('game-status');
+    if (statusDiv) {
+      statusDiv.innerText = message;
+      statusDiv.className = isError 
+        ? 'p-2 text-center text-sm mt-2 bg-red-600 text-white rounded'
+        : 'p-2 text-center text-sm mt-2 bg-blue-500 text-white rounded';
+      
+      if (!this.debugMode) {
+        statusDiv.style.display = 'none';
+      }
+    }
+    this.log(message);
   }
   
   setupControls() {
@@ -145,10 +342,24 @@ export default class PacmanGame {
   }
   
   async payGameFee() {
+    this.showStatus('Processing payment...');
+    
+    // Debug mode bypass
+    if (this.debugMode) {
+      this.log('Debug mode: Bypassing payment process');
+      this.gamePaid = true;
+      this.showMessage('DEBUG MODE: Payment successful! Click Start to play.');
+      document.getElementById('start-button').classList.remove('hidden');
+      this.showStatus('Payment successful (debug mode)');
+      return;
+    }
+    
     if (!this.auth.isSignedIn) {
+      this.showStatus('Not signed in, attempting to sign in...', true);
       const signedIn = await this.auth.signIn();
       if (!signedIn) {
         this.showMessage('Failed to sign in with Warpcast. Please try again.');
+        this.showStatus('Sign-in failed', true);
         return;
       }
     }
@@ -159,13 +370,18 @@ export default class PacmanGame {
       
       if (!fid || !username) {
         this.showMessage('Could not get user information. Please try again.');
+        this.showStatus('User information not available', true);
         return;
       }
+      
+      this.showStatus(`Processing payment for FID: ${fid}, Username: ${username}`);
       
       // Call contract to pay game fee
       const tx = await this.contract.payGameFee(fid, username, {
         value: ethers.utils.parseEther('0.1')
       });
+      
+      this.showStatus('Transaction sent, waiting for confirmation...');
       
       // Wait for transaction confirmation
       await tx.wait();
@@ -173,22 +389,29 @@ export default class PacmanGame {
       this.gamePaid = true;
       this.showMessage('Payment successful! Click Start to play.');
       document.getElementById('start-button').classList.remove('hidden');
+      this.showStatus('Payment confirmed successfully');
     } catch (error) {
       console.error('Error paying game fee:', error);
-      this.showMessage('Failed to process payment. Please try again.');
+      this.showMessage(`Failed to process payment: ${error.message || 'Unknown error'}`);
+      this.showStatus(`Payment error: ${error.message}`, true);
     }
   }
   
   startGame() {
-    if (!this.gamePaid) {
+    if (!this.gamePaid && !this.debugMode) {
       this.showMessage('Please pay 0.1 MON to play.');
+      this.showStatus('Game not paid for', true);
       return;
     }
     
+    this.showStatus('Starting game...');
     this.gameStarted = true;
     this.gameOver = false;
     this.score = 0;
     this.level = 1;
+    
+    // Play start sound
+    this.playSound('start');
     
     // Initialize game board
     this.initializeLevel();
@@ -201,6 +424,8 @@ export default class PacmanGame {
     
     // Update score display
     this.updateScoreDisplay();
+    
+    this.showStatus('Game started - Level 1');
   }
   
   initializeLevel() {
@@ -227,6 +452,8 @@ export default class PacmanGame {
     
     // Adjust difficulty based on level
     this.adjustDifficulty();
+    
+    this.log(`Level ${this.level} initialized`);
   }
   
   createWalls() {
@@ -431,6 +658,7 @@ export default class PacmanGame {
         this.score += dot.value;
         this.dots.splice(i, 1);
         this.updateScoreDisplay();
+        this.playSound('munch');
       }
     }
     
@@ -447,6 +675,7 @@ export default class PacmanGame {
         this.score += pellet.value;
         this.powerPellets.splice(i, 1);
         this.updateScoreDisplay();
+        this.playSound('powerPellet');
         
         // Make ghosts vulnerable
         for (const ghost of this.ghosts) {
@@ -473,12 +702,13 @@ export default class PacmanGame {
         Math.pow(this.pacman.x - ghost.x, 2) + 
         Math.pow(this.pacman.y - ghost.y, 2)
       );
-      // Continue the checkCollisions method in game.js
+      
       if (distance < this.pacman.size / 2 + ghost.size / 2) {
         if (ghost.vulnerable) {
           // Eat the ghost
           this.score += 200;
           this.updateScoreDisplay();
+          this.playSound('ghostEaten');
           
           // Reset ghost position
           ghost.x = 300 + i * 40;
@@ -519,23 +749,60 @@ export default class PacmanGame {
     // Draw walls
     this.ctx.fillStyle = '#0000FF'; // Blue walls
     for (const wall of this.walls) {
-      this.ctx.fillRect(wall.x, wall.y, wall.width, wall.height);
+      if (this.assetsLoaded && this.images.wall.complete) {
+        // Use wall image if available
+        const wallImg = this.images.wall;
+        for (let x = wall.x; x < wall.x + wall.width; x += 20) {
+          for (let y = wall.y; y < wall.y + wall.height; y += 20) {
+            this.ctx.drawImage(
+              wallImg,
+              x,
+              y,
+              Math.min(20, wall.x + wall.width - x),
+              Math.min(20, wall.y + wall.height - y)
+            );
+          }
+        }
+      } else {
+        // Fallback to rectangle
+        this.ctx.fillRect(wall.x, wall.y, wall.width, wall.height);
+      }
     }
     
     // Draw dots
     this.ctx.fillStyle = '#FFFFFF'; // White dots
     for (const dot of this.dots) {
-      this.ctx.beginPath();
-      this.ctx.arc(dot.x, dot.y, dot.size, 0, Math.PI * 2);
-      this.ctx.fill();
+      if (this.assetsLoaded && this.images.dot.complete) {
+        this.ctx.drawImage(
+          this.images.dot,
+          dot.x - dot.size,
+          dot.y - dot.size,
+          dot.size * 2,
+          dot.size * 2
+        );
+      } else {
+        this.ctx.beginPath();
+        this.ctx.arc(dot.x, dot.y, dot.size, 0, Math.PI * 2);
+        this.ctx.fill();
+      }
     }
     
     // Draw power pellets
     this.ctx.fillStyle = '#FFFFFF'; // White power pellets
     for (const pellet of this.powerPellets) {
-      this.ctx.beginPath();
-      this.ctx.arc(pellet.x, pellet.y, pellet.size, 0, Math.PI * 2);
-      this.ctx.fill();
+      if (this.assetsLoaded && this.images.powerPellet.complete) {
+        this.ctx.drawImage(
+          this.images.powerPellet,
+          pellet.x - pellet.size,
+          pellet.y - pellet.size,
+          pellet.size * 2,
+          pellet.size * 2
+        );
+      } else {
+        this.ctx.beginPath();
+        this.ctx.arc(pellet.x, pellet.y, pellet.size, 0, Math.PI * 2);
+        this.ctx.fill();
+      }
     }
     
     // Draw ghosts
@@ -548,11 +815,52 @@ export default class PacmanGame {
     
     // Draw level indicator
     this.ctx.fillStyle = '#FFFFFF';
-    this.ctx.font = '16px Arial';
+    this.ctx.font = '16px "Press Start 2P", Arial';
     this.ctx.fillText(`Level: ${this.level}`, 20, 20);
   }
   
-  drawPacman() {
+drawPacman() {
+    if (this.assetsLoaded) {
+      // Use pacman images if available
+      let pacmanImg;
+      
+      if (!this.pacman.mouthOpen) {
+        if (this.images.pacmanClosed.complete) {
+          pacmanImg = this.images.pacmanClosed;
+        }
+      } else {
+        switch (this.pacman.direction) {
+          case 'right':
+            if (this.images.pacmanRight.complete) pacmanImg = this.images.pacmanRight;
+            break;
+          case 'left':
+            if (this.images.pacmanLeft.complete) pacmanImg = this.images.pacmanLeft;
+            break;
+          case 'up':
+            if (this.images.pacmanUp.complete) pacmanImg = this.images.pacmanUp;
+            break;
+          case 'down':
+            if (this.images.pacmanDown.complete) pacmanImg = this.images.pacmanDown;
+            break;
+          default:
+            if (this.images.pacmanRight.complete) pacmanImg = this.images.pacmanRight;
+        }
+      }
+      
+      if (pacmanImg) {
+        // Draw the pacman image
+        this.ctx.drawImage(
+          pacmanImg,
+          this.pacman.x - this.pacman.size / 2,
+          this.pacman.y - this.pacman.size / 2,
+          this.pacman.size,
+          this.pacman.size
+        );
+        return;
+      }
+    }
+    
+    // Fallback to canvas drawing if images not available
     this.ctx.fillStyle = this.pacman.color;
     this.ctx.beginPath();
     
@@ -628,6 +936,49 @@ export default class PacmanGame {
   }
   
   drawGhost(ghost) {
+    if (this.assetsLoaded) {
+      // Use ghost images if available
+      let ghostImg;
+      
+      if (ghost.vulnerable && this.images.ghostVulnerable.complete) {
+        ghostImg = this.images.ghostVulnerable;
+      } else {
+        switch (ghost.color) {
+          case '#FF0000': // Red
+            if (this.images.ghostRed.complete) ghostImg = this.images.ghostRed;
+            break;
+          case '#FFB8FF': // Pink
+            if (this.images.ghostPink.complete) ghostImg = this.images.ghostPink;
+            break;
+          case '#00FFFF': // Blue/Cyan
+            if (this.images.ghostBlue.complete) ghostImg = this.images.ghostBlue;
+            break;
+          case '#FFB852': // Orange
+            if (this.images.ghostOrange.complete) ghostImg = this.images.ghostOrange;
+            break;
+          default:
+            if (ghost.vulnerable && this.images.ghostVulnerable.complete) {
+              ghostImg = this.images.ghostVulnerable;
+            } else if (this.images.ghostRed.complete) {
+              ghostImg = this.images.ghostRed;
+            }
+        }
+      }
+      
+      if (ghostImg) {
+        // Draw the ghost image
+        this.ctx.drawImage(
+          ghostImg,
+          ghost.x - ghost.size / 2,
+          ghost.y - ghost.size / 2,
+          ghost.size,
+          ghost.size
+        );
+        return;
+      }
+    }
+    
+    // Fallback to canvas drawing if images not available
     this.ctx.fillStyle = ghost.color;
     
     // Draw ghost body (semicircle on top of rectangle)
@@ -742,6 +1093,7 @@ export default class PacmanGame {
     
     messageDiv.innerText = message;
     messageDiv.style.display = 'block';
+    this.log(`Message displayed: ${message}`);
   }
   
   hideMessage() {
@@ -753,6 +1105,10 @@ export default class PacmanGame {
   
   nextLevel() {
     this.level += 1;
+    this.showStatus(`Completed level ${this.level - 1}`);
+    
+    // Play level complete sound
+    this.playSound('levelComplete');
     
     // Show level transition message
     this.showMessage(`Level ${this.level}`);
@@ -761,6 +1117,7 @@ export default class PacmanGame {
     setTimeout(() => {
       this.initializeLevel();
       this.hideMessage();
+      this.showStatus(`Playing level ${this.level}`);
     }, 2000);
   }
   
@@ -768,11 +1125,22 @@ export default class PacmanGame {
     this.gameOver = true;
     this.gameStarted = false;
     
+    // Play death sound
+    this.playSound('death');
+    
     // Show game over message
     this.showMessage(`Game Over! Final Score: ${this.score}`);
+    this.showStatus(`Game over - Score: ${this.score}`);
     
     // Submit score to blockchain
-    await this.submitScore();
+    if (!this.debugMode) {
+      await this.submitScore();
+    } else {
+      this.log(`Debug mode: Score ${this.score} would be submitted`);
+      setTimeout(() => {
+        this.showMessage(`Game Over! Score: ${this.score} (Debug Mode)`);
+      }, 2000);
+    }
     
     // Reset game
     setTimeout(() => {
@@ -782,7 +1150,7 @@ export default class PacmanGame {
   
   async submitScore() {
     if (!this.auth.isSignedIn) {
-      console.error('Not signed in');
+      this.showStatus('Not signed in, cannot submit score', true);
       return;
     }
     
@@ -790,20 +1158,30 @@ export default class PacmanGame {
       const fid = this.auth.getUserFid();
       
       if (!fid) {
-        console.error('No FID available');
+        this.showStatus('No FID available, cannot submit score', true);
         return;
       }
       
       // Submit score to blockchain
-      console.log(`Submitting score: ${this.score} for FID: ${fid}`);
+      this.showStatus(`Submitting score: ${this.score} for FID: ${fid}`);
       
-      const tx = await this.contract.updateScore(fid, this.score);
-      await tx.wait();
-      
-      console.log('Score submitted successfully');
-      this.showMessage(`Game Over! Score submitted: ${this.score}`);
+      try {
+        const tx = await this.contract.updateScore(fid, this.score);
+        this.showStatus('Transaction sent, waiting for confirmation...');
+        await tx.wait();
+        
+        this.showStatus('Score submitted successfully');
+        this.showMessage(`Game Over! Score submitted: ${this.score}`);
+      } catch (error) {
+        this.showStatus(`Error submitting transaction: ${error.message}`, true);
+        this.showMessage(`Game Over! Failed to submit score: ${error.message}`);
+        
+        if (this.debugMode) {
+          this.log(`Would have submitted score: ${this.score} for FID: ${fid}`);
+        }
+      }
     } catch (error) {
-      console.error('Error submitting score:', error);
+      this.showStatus(`Score submission error: ${error.message}`, true);
       this.showMessage('Game Over! Failed to submit score. Please try again.');
     }
   }
