@@ -3,125 +3,125 @@ import { sdk } from '@farcaster/frame-sdk';
 export default class Auth {
   constructor() {
     this.user = null;
-    this.nonce = null;
     this.isSignedIn = false;
+    this.isWarpcast = false;
   }
 
   async init() {
     try {
-      // Try multiple methods to detect if we're in a Farcaster Mini App
-      let isInMiniApp = false;
+      console.log("Initializing Auth...");
       
+      // Try to detect if we're running in Warpcast
       try {
-        // Method 1: Check using isInMiniApp
-        isInMiniApp = await sdk.isInMiniApp();
+        // Check if we're in a Farcaster Mini App
+        const isInMiniApp = await sdk.isInMiniApp();
         console.log("Is in Mini App according to SDK:", isInMiniApp);
-      } catch (error) {
-        console.warn('Error checking Mini App context:', error.message);
         
-        // Method 2: Try to access context
+        if (isInMiniApp) {
+          this.isWarpcast = true;
+          
+          // In Warpcast, user is already authenticated through the app
+          try {
+            // Try to get user context from SDK
+            const context = sdk.context;
+            if (context && context.user) {
+              this.user = context.user;
+              this.isSignedIn = true;
+              console.log("Got Warpcast user from context:", this.user);
+            } else {
+              // Fallback user if no context
+              this.user = { fid: 123456, username: "warpcast_user" };
+              this.isSignedIn = true;
+              console.log("Using fallback Warpcast user");
+            }
+          } catch (err) {
+            console.warn("Error getting user context:", err);
+            // Fallback for errors
+            this.user = { fid: 999999, username: "warpcast_user" };
+            this.isSignedIn = true;
+          }
+          
+          // In Warpcast, we consider auth successful no matter what
+          return true;
+        }
+      } catch (error) {
+        console.warn("Error checking Mini App status:", error);
+        
+        // Fallback detection methods
         try {
           const context = sdk.context;
           if (context && (context.client || context.user)) {
-            isInMiniApp = true;
-            console.log("Detected via context:", context);
-            
-            // If we have user context, use it
+            this.isWarpcast = true;
             if (context.user) {
               this.user = context.user;
-              console.log("Using user from context:", this.user);
-              
-              // Consider already signed in if we have user info
+              this.isSignedIn = true;
+            } else {
+              this.user = { fid: 888888, username: "warpcast_fallback" };
               this.isSignedIn = true;
             }
+            return true;
           }
-        } catch (err) {
-          console.warn('Error checking context:', err.message);
+        } catch (e) {
+          console.warn("Error checking context:", e);
         }
       }
       
-      // Always return true to allow the game to proceed
-      // This ensures we don't block the game even if auth detection fails
+      // If we're here, we're NOT in Warpcast
+      // For web version, auth will happen on-demand when signIn is called
+      console.log("Not in Warpcast - will authenticate with MetaMask when needed");
       return true;
     } catch (error) {
-      console.error('Auth initialization error:', error);
-      return false;
+      console.error("Auth initialization error:", error);
+      // Return true anyways to not block the app
+      return true;
     }
   }
 
   async signIn() {
+    // Already signed in
+    if (this.isSignedIn) {
+      console.log("Already signed in:", this.user);
+      return true;
+    }
+    
+    // In Warpcast - we're already signed in through the app
+    if (this.isWarpcast) {
+      if (!this.user) {
+        this.user = { fid: 777777, username: "warpcast_auto" };
+      }
+      this.isSignedIn = true;
+      return true;
+    }
+    
+    // Web version - use wallet connection as "sign in"
     try {
-      // If we already have a user (from context), consider signed in
-      if (this.user && this.isSignedIn) {
-        console.log("Already signed in with user:", this.user);
+      // Check if we can access the wallet
+      if (!window.ethereum) {
+        console.error("No wallet detected");
+        return false;
+      }
+      
+      // Request accounts
+      const accounts = await window.ethereum.request({ 
+        method: 'eth_requestAccounts' 
+      });
+      
+      if (accounts && accounts.length > 0) {
+        const address = accounts[0];
+        console.log("Connected to wallet:", address);
+        
+        // Create a user object with the wallet address
+        this.user = {
+          fid: 0, // Not a real FID
+          username: `${address.substring(0, 6)}...${address.substring(38)}`,
+          address: address
+        };
+        
+        this.isSignedIn = true;
         
         // Update UI
         if (document.getElementById('user-info')) {
-          document.getElementById('user-info').innerText = 
-            `Signed in as: ${this.user.displayName || this.user.username || `FID: ${this.user.fid}`}`;
-        }
-        
-        return true;
-      }
-      
-      // Generate a secure nonce for signing
-      this.nonce = Math.random().toString(36).substring(2, 15);
-      console.log("Generated nonce for sign-in:", this.nonce);
-      
-      try {
-        // Request Sign in with Farcaster
-        console.log("Requesting Farcaster sign-in...");
-        const signInResult = await sdk.actions.signIn({
-          nonce: this.nonce,
-          acceptAuthAddress: true,
-        });
-        
-        console.log("Sign-in result:", signInResult);
-        
-        if (signInResult && signInResult.message && signInResult.signature) {
-          this.isSignedIn = true;
-          
-          // Try to get user info from context
-          try {
-            const context = sdk.context;
-            if (context && context.user) {
-              this.user = context.user;
-              console.log("Got user from context after sign-in:", this.user);
-            }
-          } catch (err) {
-            console.warn('Error getting user from context after sign-in:', err);
-          }
-          
-          // If we don't have user info, create a minimal placeholder
-          if (!this.user) {
-            console.log("No user info available, creating placeholder");
-            this.user = {
-              fid: 999999, // Placeholder
-              username: "warpcast_user"
-            };
-          }
-          
-          // Update user display
-          if (document.getElementById('user-info')) {
-            document.getElementById('user-info').innerText = 
-              `Signed in as: ${this.user.displayName || this.user.username || `FID: ${this.user.fid}`}`;
-          }
-          
-          return true;
-        }
-      } catch (error) {
-        console.error('Sign-in error:', error);
-        
-        // Create a fallback user if sign-in fails
-        // This ensures the game still works even if sign-in fails
-        this.isSignedIn = true;
-        this.user = {
-          fid: 888888, // Placeholder
-          username: "warpcast_player"
-        };
-        
-        if (document.getElementById('user-info')) {
-          document.getElementById('user-info').innerText = 'Signed in as: Warpcast Player';
+          document.getElementById('user-info').innerText = `Signed in as: ${this.user.username}`;
         }
         
         return true;
@@ -129,25 +129,20 @@ export default class Auth {
       
       return false;
     } catch (error) {
-      console.error('Sign-in process error:', error);
-      
-      // Last resort fallback
-      this.isSignedIn = true;
-      this.user = { fid: 777777, username: "fallback_user" };
-      
-      if (document.getElementById('user-info')) {
-        document.getElementById('user-info').innerText = 'Signed in as: Fallback User';
-      }
-      
-      return true;
+      console.error("Sign-in error:", error);
+      return false;
     }
   }
 
   getUserFid() {
-    return this.user ? this.user.fid : null;
+    return this.user ? (this.user.fid || 0) : 0;
   }
 
   getUserName() {
-    return this.user ? (this.user.username || this.user.displayName || `FID: ${this.user.fid}`) : null;
+    if (!this.user) return null;
+    
+    return this.user.username || 
+           this.user.displayName || 
+           (this.user.address ? `${this.user.address.substring(0, 6)}...` : "Unknown");
   }
 }
