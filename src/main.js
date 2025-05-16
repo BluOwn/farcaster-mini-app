@@ -9,7 +9,7 @@ import PacmanGame from './components/game.js';
 import Leaderboard from './components/leaderboard.js';
 
 // Set your contract address here
-const PACMAN_CONTRACT_ADDRESS = "0x1234567890123456789012345678901234567890"; // Replace with your actual contract address
+const PACMAN_CONTRACT_ADDRESS = "0x5bCBB2d1d45c57a745c490d9e9421E0c05EdC778"; // Replace with your actual contract address
 
 // IMPORTANT: Set this to false for production
 const DEBUG_MODE = false; // Set to false for production
